@@ -1,3 +1,36 @@
 syntax = "proto3";
 
 package masterworker;
+
+
+service MRWorker{
+  rpc AssignMap(MapRequest) returns (MapReply) {}
+  rpc AssignReduce (ReduceRequest) returns (ReduceReply) {}
+}
+
+message MapRequest {
+  repeated File shard = 1;
+  uint32 n_outputs = 2;
+  string user_id = 3;
+}
+
+message MapReply {
+  bool succeed = 1;
+  repeated string file_locs = 2;
+}
+
+ReduceRequest {
+  string user_id = 1;
+  uint32 n_outputs = 2;
+  repeated string file_locs = 3;
+}
+
+ReduceReply {
+  bool succeed = 1;
+}
+
+message File {
+  string path = 1;
+  int64 start_pos = 2;
+  int64 end_pos = 3;
+}
