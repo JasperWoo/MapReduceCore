@@ -19,13 +19,13 @@ message MapReply {
   repeated string file_locs = 2;
 }
 
-ReduceRequest {
+message ReduceRequest {
   string user_id = 1;
   uint32 n_outputs = 2;
   repeated string file_locs = 3;
 }
 
-ReduceReply {
+message ReduceReply {
   bool succeed = 1;
 }
 
