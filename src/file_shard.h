@@ -16,7 +16,7 @@ struct FileShard {
 	unordered_map<string, pair<streampos, streampos>> files;
 };
 
-streamsize get_file_size(const string& filename) {
+inline streamsize get_file_size(const string& filename) {
     ifstream fin(filename, ios::ate | ios::binary);
     streamsize size =  fin.tellg(); 
     fin.close();

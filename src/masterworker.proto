@@ -9,9 +9,10 @@ service MRWorker{
 }
 
 message MapRequest {
-  repeated File shard = 1;
-  uint32 n_outputs = 2;
-  string user_id = 3;
+  uint32 shard_id = 1;
+  repeated File shard = 2;
+  uint32 n_outputs = 3;
+  string user_id = 4;
 }
 
 message MapReply {
@@ -20,9 +21,10 @@ message MapReply {
 }
 
 message ReduceRequest {
-  string user_id = 1;
-  uint32 n_outputs = 2;
-  repeated string file_locs = 3;
+  uint32 part_id = 1;
+  string user_id = 2;
+  uint32 n_outputs = 3;
+  repeated string file_locs = 4;
 }
 
 message ReduceReply {
