@@ -33,6 +33,7 @@ class Master {
 	        	MAPPER = 1,
 	        	REDUCER = 2
 	    };
+
 		struct MapTask {
 			MapTask(uint32_t shard_id, FileShard shard, std::string user_id, uint32_t n_outputs, std::string output_dir)
 			: shard_id_(shard_id), shard_(shard), user_id_(user_id), n_outputs_(n_outputs), output_dir_(output_dir) {}
@@ -153,7 +154,7 @@ class Master {
 
 		};
 
-
+		std::string worker_states[3] = {"DOWN", "AVAILABLE", "BUSY"};
 		int n_workers;     // # of workers
 		int n_outputs; // # of output files
 		std::string output_dir; // output directory
@@ -165,6 +166,7 @@ class Master {
 		std::vector<bool> map_complete;
 		std::vector<bool> red_complete;
 		grpc::CompletionQueue cq;
+
 };
 
 
@@ -204,28 +206,42 @@ bool Master::run() {
 	// Initialize worker clients.
 	for (auto& worker_addr : worker_addrs) {
 		// TODO: deallocate
-		MRWorkerClient *worker = new MRWorkerClient(this, grpc::CreateChannel(
-			worker_addr, grpc::InsecureChannelCredentials()), MRWorkerClient::AVAILABLE);
+		std::shared_ptr<grpc::Channel> channel = 
+			grpc::CreateChannel(worker_addr, grpc::InsecureChannelCredentials());
+		// Initial channel is always IDLE
+		GPR_ASSERT(channel->GetState(true) == GRPC_CHANNEL_IDLE);
+		
+		// Wait for 10ms to connect 
+		auto channel_state = GRPC_CHANNEL_IDLE;
+		channel->WaitForStateChange(
+        channel_state, std::chrono::system_clock::now() + std::chrono::milliseconds(10));
+		channel_state = channel->GetState(false);
+
+		// For ready services, set worker status as available.
+		MRWorkerClient::State worker_state = MRWorkerClient::DOWN;
+		if(channel_state == GRPC_CHANNEL_CONNECTING || channel_state == GRPC_CHANNEL_READY) {
+			worker_state = MRWorkerClient::AVAILABLE;
+		}
+		std::cout << "Initial worker state is : " << worker_states[worker_state] << std::endl;
+		MRWorkerClient *worker = new MRWorkerClient(this, channel, worker_state);
 		mr_workers.push_back(worker);
 	}
 
-std::cout << "here 111" <<std::endl;
+
+
 
 	// For every shard, send messages to workers async; Set deadline; 
 	while (!allTrue(map_complete)) {
-		std::cout << "here III" <<std::endl;
 		for (int i = 0; i < mr_workers.size() && !map_tasks.empty(); i++) {
 			if (!mr_workers[i]->state_ == MRWorkerClient::AVAILABLE) continue;
 			mr_workers[i]->AssignMap(map_tasks.front());
 			map_tasks.pop();
-			std::cout << "here XXX" <<std::endl;
 		}
 		void *tag;
 		bool ok = false;
 		// cq.AsyncNext(&tag, &ok, std::chrono::seconds(1));
 		cq.Next(&tag, &ok);
 
-std::cout << "here 222" <<std::endl;
 
 		if (ok) {
 			MRMapperCallData* call = static_cast<MRMapperCallData*>(tag);
@@ -246,7 +262,6 @@ std::cout << "here 222" <<std::endl;
 					for (int i = 0; i < mapReply->file_locs_size(); i++) {
 						red_tasks[i].file_locs_.push_back(mapReply->file_locs(i));
 					}
-std::cout << "here 333" <<std::endl;
 					// TODO: clean call data 
 					map_complete[call->request_.shard_id()] = true;
 				} else {
@@ -256,7 +271,6 @@ std::cout << "here 333" <<std::endl;
 			}
 		}
 	}
-std::cout << "here 444" <<std::endl;
 
 	// imd files have been set up, send reduce job 
 	while (!allTrue(red_complete)) {
