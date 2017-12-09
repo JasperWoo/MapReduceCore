@@ -89,7 +89,6 @@ inline bool shard_files(const MapReduceSpec& mr_spec, std::vector<FileShard>& fi
 			fileShards.push_back(cur);
 		}
 		fin.close();
-		cout << endl<<endl<<endl;
 	}
 	return true;
 }

@@ -34,29 +34,6 @@ class Master {
 	        	REDUCER = 2
 	    };
 
-		struct MapTask {
-			MapTask(uint32_t shard_id, FileShard shard, std::string user_id, uint32_t n_outputs, std::string output_dir)
-			: shard_id_(shard_id), shard_(shard), user_id_(user_id), n_outputs_(n_outputs), output_dir_(output_dir) {}
-			
-			uint32_t shard_id_;
-			FileShard shard_;
-			std::string user_id_;
-			uint32_t n_outputs_;
-			std::string output_dir_;
-		};
-
-		struct ReduceTask {
-			ReduceTask(uint32_t part_id, std::string user_id, uint32_t n_outputs, std::string output_dir)
-			: part_id_(part_id), user_id_(user_id), n_outputs_(n_outputs), output_dir_(output_dir) {}
-			
-			uint32_t part_id_;
-			std::vector<std::string> file_locs_;
-			std::string user_id_;
-			uint32_t n_outputs_;
-			std::string output_dir_;
-		};
-
-
 		// struct encompasing the states of individual requests
 		struct MRWorkerCallData {
 			explicit MRWorkerCallData(WorkerType type): type_(type) {}
@@ -71,21 +48,8 @@ class Master {
 		};
 
 		struct MRMapperCallData : public MRWorkerCallData {
-			MRMapperCallData(WorkerType type, MapTask& task)
-			: MRWorkerCallData(type) {
-				request_.set_shard_id(task.shard_id_);
-				
-				for (auto it = task.shard_.files.begin(); it != task.shard_.files.end(); it++) {
-	                File* file = request_.add_shard();
-	                file->set_path(it->first);
-	                file->set_start_pos(it->second.first);
-	                file->set_end_pos(it->second.second);
-	            }
-
-				request_.set_user_id(task.user_id_);
-				request_.set_n_outputs(task.n_outputs_);
-				request_.set_output_dir(task.output_dir_);
-			}
+			MRMapperCallData(WorkerType type, MapRequest request)
+			: MRWorkerCallData(type), request_(request) {}
 
 			MapReply reply_;
 			std::unique_ptr<grpc::ClientAsyncResponseReader<MapReply>> rpc_reader_;
@@ -93,18 +57,8 @@ class Master {
 		};
 
 		struct MRReducerCallData : public MRWorkerCallData {
-			MRReducerCallData(WorkerType type, ReduceTask& task)
-			: MRWorkerCallData(type) {
-				request_.set_part_id(task.part_id_);
-				
-				for (auto file_loc : task.file_locs_) {
-					request_.add_file_locs(file_loc);
-	            }
-
-				request_.set_user_id(task.user_id_);
-				request_.set_n_outputs(task.n_outputs_);
-				request_.set_output_dir(task.output_dir_);
-			}
+			MRReducerCallData(WorkerType type, ReduceRequest request)
+			: MRWorkerCallData(type), request_(request) {}
 
 			ReduceReply reply_;
 			std::unique_ptr<grpc::ClientAsyncResponseReader<ReduceReply>> rpc_reader_;
@@ -128,7 +82,7 @@ class Master {
 			State state_;
 			
 			// Assembles client payload and send to server.
-			void AssignMap (MapTask& map_task) {
+			void AssignMap (MapRequest map_task) {
 				this->state_ = BUSY;
 
 				MRMapperCallData* call = new MRMapperCallData(MAPPER, map_task);
@@ -140,7 +94,7 @@ class Master {
 				call->rpc_reader_->Finish(&call->reply_, &call->status_, (void*)call);
 			}
 
-			void AssignReduce (ReduceTask& reduce_task) {
+			void AssignReduce (ReduceRequest reduce_task) {
 				this->state_ = BUSY;
 				
 				MRReducerCallData* call = new MRReducerCallData(REDUCER, reduce_task);
@@ -155,13 +109,9 @@ class Master {
 		};
 
 		std::string worker_states[3] = {"DOWN", "AVAILABLE", "BUSY"};
-		int n_workers;     // # of workers
-		int n_outputs; // # of output files
-		std::string output_dir; // output directory
-		std::string user_id; // identifier of task
 		std::vector<std::string> worker_addrs; // worker ip addresses and ports
-		std::queue<MapTask> map_tasks;
-		std::vector<ReduceTask> red_tasks;
+		std::vector<MapRequest> map_tasks;
+		std::vector<ReduceRequest> red_tasks;
 		std::vector<MRWorkerClient*> mr_workers;
 		std::vector<bool> map_complete;
 		std::vector<bool> red_complete;
@@ -182,22 +132,36 @@ bool allTrue(std::vector<bool> array) {
 /* CS6210_TASK: This is all the information your master will get from the framework.
 	You can populate your other class data members here if you want */
 Master::Master(const MapReduceSpec& mr_spec, const std::vector<FileShard>& file_shards) {
-	n_workers = mr_spec.n_workers;
-	n_outputs = mr_spec.n_outputs;
-	output_dir = mr_spec.output_dir;
-	user_id = mr_spec.user_id;
 	worker_addrs = mr_spec.worker_addrs;
+
 	for (uint32_t i = 0; i < file_shards.size(); i++) {
-		MapTask map_task(i, file_shards[i], user_id, n_outputs, output_dir);
-		map_tasks.push(map_task);
+		MapRequest request;
+		request.set_shard_id(i);
+		for (auto it = file_shards[i].files.begin(); it != file_shards[i].files.end(); it++) {
+	        File* file = request.add_shard();
+	        file->set_path(it->first);
+	        file->set_start_pos(it->second.first);
+	        file->set_end_pos(it->second.second);
+	    }
+		request.set_user_id(mr_spec.user_id);
+		request.set_n_outputs(mr_spec.n_outputs);
+		request.set_output_dir(mr_spec.output_dir);
+
+		map_tasks.emplace_back(request);
 		map_complete.push_back(false);
 	}
-	for (uint32_t i = 0; i < n_outputs; i++) {
-		ReduceTask red_task(i, user_id, n_outputs, output_dir);
-		red_tasks.push_back(red_task);
+
+	for (uint32_t i = 0; i < mr_spec.n_outputs; i++) {
+		ReduceRequest request;
+		request.set_part_id(i);
+
+		request.set_user_id(mr_spec.user_id);
+		request.set_n_outputs(mr_spec.n_outputs);
+		request.set_output_dir(mr_spec.output_dir);
+		
+		red_tasks.push_back(request);
 		red_complete.push_back(false);
 	}
-
     
 }
 
@@ -208,6 +172,7 @@ bool Master::run() {
 		// TODO: deallocate
 		std::shared_ptr<grpc::Channel> channel = 
 			grpc::CreateChannel(worker_addr, grpc::InsecureChannelCredentials());
+		
 		// Initial channel is always IDLE
 		GPR_ASSERT(channel->GetState(true) == GRPC_CHANNEL_IDLE);
 		
@@ -235,7 +200,7 @@ bool Master::run() {
 		for (int i = 0; i < mr_workers.size() && !map_tasks.empty(); i++) {
 			if (!mr_workers[i]->state_ == MRWorkerClient::AVAILABLE) continue;
 			mr_workers[i]->AssignMap(map_tasks.front());
-			map_tasks.pop();
+			map_tasks.pop_back();
 		}
 		void *tag;
 		bool ok = false;
@@ -260,7 +225,7 @@ bool Master::run() {
 				MapReply *mapReply = &call->reply_;
 				if (mapReply->succeed()) {
 					for (int i = 0; i < mapReply->file_locs_size(); i++) {
-						red_tasks[i].file_locs_.push_back(mapReply->file_locs(i));
+						red_tasks[i].add_file_locs(mapReply->file_locs(i));
 					}
 					// TODO: clean call data 
 					map_complete[call->request_.shard_id()] = true;

@@ -146,11 +146,11 @@ inline bool validate_mr_spec(const MapReduceSpec& mr_spec) {
 		cerr << "[ERROR] in Spec: output file " << mr_spec.output_dir << " cannot open!" << endl;
 		return false;
 	}  else {
-		cout << "trial_output file is " << trial_output << endl;
+		cout << "[In spec]: trial_output file is " << trial_output << endl;
 		if(remove(trial_output.c_str()) != 0 )
 			cerr << "Error deleting file" << endl;
 	    else
-			cout << "File successfully deleted" << endl;
+			cout << "[In spec]: File successfully deleted" << endl;
 	}
 
 	return true; // all good!

@@ -73,7 +73,6 @@ bool Worker::run() {
 grpc::Status Worker::AssignMap(grpc::ServerContext *context,
 								const MapRequest *request,
 								MapReply *response) {
-std::cout << "MAP 111" << std::endl;
 	// grab request info
 	uint32_t  n_outputs = request->n_outputs();
 	uint32_t  shard_id = request->shard_id();
@@ -82,7 +81,6 @@ std::cout << "MAP 111" << std::endl;
 	std::string output_dir = request->output_dir();
 	// acquire use map function
 	std::shared_ptr<BaseMapper> user_mapper = get_mapper_from_task_factory(user_id);
-std::cout << "MAP 222" << std::endl;
 
 	// set up mapper internal.
 	user_mapper->impl_ = new BaseMapperInternal();
@@ -97,17 +95,14 @@ std::cout << "MAP 222" << std::endl;
 		ifstream fin(path, ios::binary);
 		fin.seekg(start_pos, ios::beg);
 		string record;
-std::cout << "MAP 333" << std::endl;
 
 		// passing to map 
 		while (getline(fin, record)) {
-			std::cout << "MAP III" << std::endl;
 			user_mapper->map(record);
 		}
 
 		fin.close();
 	}
-std::cout << "MAP 444" << std::endl;
 
 	// write response
 	response->set_succeed(true);
