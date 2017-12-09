@@ -1,6 +1,7 @@
 #pragma once
 
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <cstdint>
 #include <mr_task_factory.h>
@@ -23,14 +24,15 @@ class Worker : public MRWorker::Service {
 		/* DON'T change this function's signature */
 		bool run();
 
-	private:
-		/* NOW you can add below, data members and member functions as per the need of your implementation*/
 		grpc::Status AssignMap(grpc::ServerContext *context,
 								const MapRequest *request,
 								MapReply *response) override;
 		grpc::Status AssignReduce(grpc::ServerContext *context,
 								const ReduceRequest *request,
 								ReduceReply *response) override;
+	
+	private:
+		/* NOW you can add below, data members and member functions as per the need of your implementation*/
 		string listening_ip_addr_port;
 };
 
@@ -71,17 +73,20 @@ bool Worker::run() {
 grpc::Status Worker::AssignMap(grpc::ServerContext *context,
 								const MapRequest *request,
 								MapReply *response) {
+std::cout << "MAP 111" << std::endl;
 	// grab request info
 	uint32_t  n_outputs = request->n_outputs();
 	uint32_t  shard_id = request->shard_id();
 	const string& user_id = request->user_id();
 	int shard_size = request->shard_size();
+	std::string output_dir = request->output_dir();
 	// acquire use map function
 	std::shared_ptr<BaseMapper> user_mapper = get_mapper_from_task_factory(user_id);
-	
+std::cout << "MAP 222" << std::endl;
+
 	// set up mapper internal.
 	user_mapper->impl_ = new BaseMapperInternal();
-	user_mapper->impl_->set_outputs(n_outputs, shard_id);
+	user_mapper->impl_->set_outputs(n_outputs, shard_id, output_dir);
 
 	// one-by-one read the files, split into records(lines separated by '\n')
 	for (int i = 0; i < shard_size; i++) {
@@ -92,15 +97,18 @@ grpc::Status Worker::AssignMap(grpc::ServerContext *context,
 		ifstream fin(path, ios::binary);
 		fin.seekg(start_pos, ios::beg);
 		string record;
-		
+std::cout << "MAP 333" << std::endl;
+
 		// passing to map 
 		while (getline(fin, record)) {
+			std::cout << "MAP III" << std::endl;
 			user_mapper->map(record);
 		}
 
 		fin.close();
 	}
-	
+std::cout << "MAP 444" << std::endl;
+
 	// write response
 	response->set_succeed(true);
 	for (int i = 0; i < user_mapper->impl_->output_files.size(); i++) {
@@ -110,9 +118,44 @@ grpc::Status Worker::AssignMap(grpc::ServerContext *context,
 	// always return ok 
 	return grpc::Status();
 }
-grpc::Status Worker::AssignReduce(grpc::ServerContext *context,
-						const ReduceRequest *request,
-						ReduceReply *response) {
-	return grpc::Status();
-}
+
+
+grpc::Status Worker::AssignReduce(grpc::ServerContext* context, const ReduceRequest* request,
+		 ReduceReply* reply){
+		std::string user_id = request->user_id();
+		std::shared_ptr<BaseReducer> user_reducer = get_reducer_from_task_factory(user_id);
+		//read all the inputFiles and arrange them into an unordered map;
+		std::string line;
+		std::map<std::string , std::vector<std::string>> resource;
+		for(const std::string& str : request->file_locs()){
+			std::ifstream intermediate_file(str);
+			if(intermediate_file.is_open()){
+				while(getline(intermediate_file,line)){
+					//information should be saved and accumlate until send to reducer for processing
+					std::istringstream linestream(line);
+					std::string key,value;
+					linestream>>key;
+					linestream>>value;
+					resource[key].push_back(value);
+				}
+			}
+			intermediate_file.close();			
+		}
+		
+		//once done, we can invoke reducer to do the work.
+		//but first, provide the config to imp_
+		user_reducer->impl_->set_n_output(request->n_outputs());
+		user_reducer->impl_->set_output_folder(request->output_dir());
+
+		for(auto itr = resource.begin();itr != resource.end();itr++){
+			user_reducer->reduce(itr->first,itr->second);
+		}
+		//these should be dumped to the same file.
+		//and write-to-file should be done by emit function in baseReducerInternal.
+		reply->set_succeed(true);
+		return grpc::Status::OK;
+
+
+	}
+
 		
