@@ -3,11 +3,17 @@
 #include <string>
 #include <vector>
 #include <iostream>
+#include <cstdio>
 #include <unordered_map>
 #include <fstream>
 #include <sstream>
 #include <utility>
+#include <unistd.h>
+
 using namespace std;
+
+#define PATH_MAX 200
+
 /* CS6210_TASK: Create your data structure here for storing spec from the config file */
 struct MapReduceSpec {
 	int n_workers;     // # of workers
@@ -56,7 +62,16 @@ inline bool read_mr_spec_from_config_file(const string& config_filename, MapRedu
 			cerr << "[ERROR] in Spec: " << e.what() << " failed to parse integer" << endl;
 			return false;
 		}
-		mr_spec.output_dir = values["output_dir"][0];
+
+		char* cwd;
+	    char buff[PATH_MAX + 1];
+	    cwd = getcwd( buff, PATH_MAX + 1 );
+	    if( cwd == NULL ) {
+	        std::cerr << "Failed to retrieve the current directory." << std::endl;
+	        return false;
+	    }
+		mr_spec.output_dir = std::string(cwd) + "/" + values["output_dir"][0];
+		
 		mr_spec.user_id = values["user_id"][0];
 		// TODO: use move() for the following two.
 		mr_spec.worker_addrs = values["worker_ipaddr_ports"];
@@ -83,10 +98,7 @@ inline bool validate_mr_spec(const MapReduceSpec& mr_spec) {
 		cerr << "[ERROR] in Spec: invalid map size." << endl;
 		return false;
 	}
-	if (mr_spec.output_dir.c_str() == nullptr) {
-		cerr << "[ERROR] in Spec: output directory undefined." << endl;
-		return false;
-	}
+	
 	if (mr_spec.user_id.c_str() == nullptr) {
 		cerr << "[ERROR] in Spec: user id undefined." << endl;
 		return false;
@@ -125,6 +137,20 @@ inline bool validate_mr_spec(const MapReduceSpec& mr_spec) {
 			cerr << "[ERROR] in Spec: invalid worker address" << endl;
 			return false;
 		}
+	}
+	// validate output dir
+	string trial_output = mr_spec.output_dir + "/trial_output";
+	ofstream fout(trial_output, ios::binary | ios::app);
+	
+	if (!fout.good()) {
+		cerr << "[ERROR] in Spec: output file " << mr_spec.output_dir << " cannot open!" << endl;
+		return false;
+	}  else {
+		cout << "trial_output file is " << trial_output << endl;
+		if(remove(trial_output.c_str()) != 0 )
+			cerr << "Error deleting file" << endl;
+	    else
+			cout << "File successfully deleted" << endl;
 	}
 
 	return true; // all good!

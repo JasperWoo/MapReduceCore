@@ -38,7 +38,7 @@ inline bool shard_files(const MapReduceSpec& mr_spec, std::vector<FileShard>& fi
 	// Actual sharding. For each input file, sha
 	for (auto& filepath : filepaths) {
 		streamsize filesize = get_file_size(filepath);
-		cout << "input file size:" << filesize / 1024.0 << endl;
+		// cout << "input file size:" << filesize / 1024.0 << endl;
 		streamsize remain = filesize;
 		// streampos offset = 0;
 		ifstream fin(filepath, ios::binary);
@@ -48,27 +48,27 @@ inline bool shard_files(const MapReduceSpec& mr_spec, std::vector<FileShard>& fi
 			if (!fileShards.empty()) {
 				FileShard last_shard = fileShards.back();
 				totalsize = 0;
-				cout <<endl<<endl<< "Entered key point 111" <<endl<<endl<<endl;
+				// cout <<endl<<endl<< "Entered key point 111" <<endl<<endl<<endl;
 				for (auto it = last_shard.files.begin(); it != last_shard.files.end(); ++it) {
 					totalsize += it->second.second - it->second.first;
 				}
-				cout <<endl<<endl<< "Totalsize:" << totalsize<< endl<<endl<<endl;
+				// cout <<endl<<endl<< "Totalsize:" << totalsize<< endl<<endl<<endl;
 				
 				if (totalsize / 1024.0 < map_size) {
 					// the last shard is not yet finished
 					extract_size = map_size - floor(totalsize / 1024.0);
-					cout <<endl<<endl<< "Extract_size updated to " << extract_size <<endl<<endl<<endl;
+					// cout <<endl<<endl<< "Extract_size updated to " << extract_size <<endl<<endl<<endl;
 					fileShards.pop_back();
 					cur = last_shard;
-					cout <<endl<<endl<< "Entered key point 222" <<endl<<endl<<endl;
+					// cout <<endl<<endl<< "Entered key point 222" <<endl<<endl<<endl;
 				}
 			}
 			streampos start = fin.tellg();
-			cout << "tell_get of start : " << start / 1024.0 << endl;
+			// cout << "tell_get of start : " << start / 1024.0 << endl;
 			// in c++11, seek is able to seek beyond the eof.
 			fin.seekg(extract_size * 1024, ios::cur);
 			streampos end = fin.tellg();
-			cout << "tell_get of end : " << end / 1024.0 << endl;
+			// cout << "tell_get of end : " << end / 1024.0 << endl;
 			
 			if (end > filesize) {
 				fin.seekg(0, ios::end);
@@ -84,7 +84,7 @@ inline bool shard_files(const MapReduceSpec& mr_spec, std::vector<FileShard>& fi
 				// seek to new line
 				fin.seekg(2, ios::cur);
 			}
-			cout << "tell_get of end after adjustment : " << end / 1024.0 << endl;
+			// cout << "tell_get of end after adjustment : " << end / 1024.0 << endl;
 			cur.files[filepath] = make_pair(start, end);
 			fileShards.push_back(cur);
 		}
