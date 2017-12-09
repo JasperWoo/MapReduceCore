@@ -13,6 +13,7 @@ message MapRequest {
   repeated File shard = 2;
   uint32 n_outputs = 3;
   string user_id = 4;
+  string output_dir = 5;
 }
 
 message MapReply {
@@ -22,9 +23,10 @@ message MapReply {
 
 message ReduceRequest {
   uint32 part_id = 1;
-  string user_id = 2;
-  uint32 n_outputs = 3;
-  repeated string file_locs = 4;
+  repeated string file_locs = 2;
+  string user_id = 3;
+  uint32 n_outputs = 4;
+  string output_dir = 5;
 }
 
 message ReduceReply {
