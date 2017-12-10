@@ -36,30 +36,30 @@ class Master {
 
 		// struct encompasing the states of individual requests
 		struct MRWorkerCallData {
-			explicit MRWorkerCallData(WorkerType type): type_(type) {}
+			explicit MRWorkerCallData(int worker_id, WorkerType type)
+			: worker_id_(worker_id), type_(type) {}
 			// Context for the client. It could be used to convey extra information to
 	        // the server and/or tweak certain RPC behaviors.
 	        grpc::ClientContext context_;
-
+			
 	        // Storage for the status of the RPC upon completion.
 	        grpc::Status status_;
 
+	        int worker_id_;
 	        WorkerType type_;
 		};
 
 		struct MRMapperCallData : public MRWorkerCallData {
-			MRMapperCallData(WorkerType type, MapRequest request)
-			: MRWorkerCallData(type), request_(request) {}
-
+			MRMapperCallData(int worker_id, WorkerType type, MapRequest request)
+			: MRWorkerCallData(worker_id, type), request_(request) {}
 			MapReply reply_;
 			std::unique_ptr<grpc::ClientAsyncResponseReader<MapReply>> rpc_reader_;
 			MapRequest request_;
 		};
 
 		struct MRReducerCallData : public MRWorkerCallData {
-			MRReducerCallData(WorkerType type, ReduceRequest request)
-			: MRWorkerCallData(type), request_(request) {}
-
+			MRReducerCallData(int worker_id, WorkerType type, ReduceRequest request)
+			: MRWorkerCallData(worker_id, type), request_(request) {}
 			ReduceReply reply_;
 			std::unique_ptr<grpc::ClientAsyncResponseReader<ReduceReply>> rpc_reader_;
 			ReduceRequest request_;
@@ -82,10 +82,10 @@ class Master {
 			State state_;
 			
 			// Assembles client payload and send to server.
-			void AssignMap (MapRequest map_task) {
+			void AssignMap (int worker_id, MapRequest map_task) {
 				this->state_ = BUSY;
 
-				MRMapperCallData* call = new MRMapperCallData(MAPPER, map_task);
+				MRMapperCallData* call = new MRMapperCallData(worker_id, MAPPER, map_task);
 				
 				call->rpc_reader_ = stub_->PrepareAsyncAssignMap(&call->context_, call->request_, &master_->cq);
 
@@ -94,10 +94,10 @@ class Master {
 				call->rpc_reader_->Finish(&call->reply_, &call->status_, (void*)call);
 			}
 
-			void AssignReduce (ReduceRequest reduce_task) {
+			void AssignReduce (int worker_id, ReduceRequest reduce_task) {
 				this->state_ = BUSY;
 				
-				MRReducerCallData* call = new MRReducerCallData(REDUCER, reduce_task);
+				MRReducerCallData* call = new MRReducerCallData(worker_id, REDUCER, reduce_task);
 
 				call->rpc_reader_ = stub_->PrepareAsyncAssignReduce(&call->context_, call->request_, &master_->cq);
 
@@ -204,11 +204,10 @@ bool Master::run() {
 
 		for (int i = 0; i < mr_workers.size() && !map_tasks.empty(); i++) {
 			if (!mr_workers[i]->state_ == MRWorkerClient::AVAILABLE) continue;
-			
 			std::cout << "remaining tasks " << map_tasks.size() << std::endl;
 			std::cout << "worker " << i << " receiving map task" << std::endl;
-			mr_workers[i]->AssignMap(map_tasks.back());
-
+			mr_workers[i]->AssignMap(i, map_tasks.back());
+			mr_workers[i]->state_ == MRWorkerClient::BUSY;
 			map_tasks.pop_back();
 
 		}
@@ -233,6 +232,7 @@ bool Master::run() {
 			} else {
 				// Set file_locs
 				MapReply *mapReply = &call->reply_;
+				mr_workers[call->worker_id_]->state_ = MRWorkerClient::AVAILABLE;
 				if (mapReply->succeed()) {
 					for (int i = 0; i < mapReply->file_locs_size(); i++) {
 						red_tasks[i].add_file_locs(mapReply->file_locs(i));
@@ -253,7 +253,7 @@ bool Master::run() {
 	while (!allTrue(red_complete)) {
 		for (int i = 0; i < mr_workers.size() && !red_tasks.empty(); i++) {
 			if (!mr_workers[i]->state_ == MRWorkerClient::AVAILABLE) continue;
-			mr_workers[i]->AssignReduce(red_tasks.back());
+			mr_workers[i]->AssignReduce(i, red_tasks.back());
 			red_tasks.pop_back();
 		}
 		void *tag;
@@ -271,7 +271,8 @@ bool Master::run() {
 						  << call->status_.error_details() << std::endl;
 				return false; 
 			} else if (call->reply_.succeed()) {
-				 red_complete[call->request_.part_id()] = true;
+				mr_workers[call->worker_id_]->state_ = MRWorkerClient::AVAILABLE;
+				red_complete[call->request_.part_id()] = true;
 			} else {
 				std::cout << "[Reduce phase]: unexpected case!" << std::endl;
 				return false;

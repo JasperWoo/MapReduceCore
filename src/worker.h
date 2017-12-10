@@ -98,9 +98,6 @@ grpc::Status Worker::AssignMap(grpc::ServerContext *context,
 		while (fin.tellg() < end_pos && getline(fin, record)) {
 			user_mapper->map(record);
 		}
-		
-		std::cout << "current pos: " << fin.tellg() <<std::endl;
-		std::cout << "end pos: " << end_pos <<std::endl;
 
 		fin.close();
 	}
