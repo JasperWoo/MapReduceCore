@@ -136,13 +136,17 @@ Master::Master(const MapReduceSpec& mr_spec, const std::vector<FileShard>& file_
 
 	for (uint32_t i = 0; i < file_shards.size(); i++) {
 		MapRequest request;
-		request.set_shard_id(i);
+		request.set_shard_id(i); 
+		std::cout << "map work added:";
+		
 		for (auto it = file_shards[i].files.begin(); it != file_shards[i].files.end(); it++) {
 	        File* file = request.add_shard();
 	        file->set_path(it->first);
 	        file->set_start_pos(it->second.first);
 	        file->set_end_pos(it->second.second);
+	        std::cout << it->first << " from " << it->second.first << " to " << it->second.second << std::endl; 
 	    }
+
 		request.set_user_id(mr_spec.user_id);
 		request.set_n_outputs(mr_spec.n_outputs);
 		request.set_output_dir(mr_spec.output_dir);
@@ -197,10 +201,16 @@ bool Master::run() {
 
 	// For every shard, send messages to workers async; Set deadline; 
 	while (!allTrue(map_complete)) {
+
 		for (int i = 0; i < mr_workers.size() && !map_tasks.empty(); i++) {
 			if (!mr_workers[i]->state_ == MRWorkerClient::AVAILABLE) continue;
-			mr_workers[i]->AssignMap(map_tasks.front());
+			
+			std::cout << "remaining tasks " << map_tasks.size() << std::endl;
+			std::cout << "worker " << i << " receiving map task" << std::endl;
+			mr_workers[i]->AssignMap(map_tasks.back());
+
 			map_tasks.pop_back();
+
 		}
 		void *tag;
 		bool ok = false;
@@ -236,6 +246,8 @@ bool Master::run() {
 			}
 		}
 	}
+	
+
 
 	// imd files have been set up, send reduce job 
 	while (!allTrue(red_complete)) {

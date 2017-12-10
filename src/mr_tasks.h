@@ -51,8 +51,6 @@ inline void BaseMapperInternal::set_outputs(std::uint32_t n_outputs, std::uint32
 	for (int i = 0; i < n_outputs; i++) {
 		output_files.push_back(output_dir + "/med_part_" + std::to_string(i) + "_num_" + std::to_string(shard_id));
 		
-		std::cout << output_files[i]<<std::endl;
-		
 		ofs.emplace_back(std::ofstream(output_files[i], std::ios::binary | std::ios::app));
 	}
 }

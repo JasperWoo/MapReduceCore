@@ -77,7 +77,6 @@ grpc::Status Worker::AssignMap(grpc::ServerContext *context,
 	uint32_t  n_outputs = request->n_outputs();
 	uint32_t  shard_id = request->shard_id();
 	const string& user_id = request->user_id();
-	int shard_size = request->shard_size();
 	std::string output_dir = request->output_dir();
 	// acquire use map function
 	std::shared_ptr<BaseMapper> user_mapper = get_mapper_from_task_factory(user_id);
@@ -87,8 +86,7 @@ grpc::Status Worker::AssignMap(grpc::ServerContext *context,
 	user_mapper->impl_->set_outputs(n_outputs, shard_id, output_dir);
 
 	// one-by-one read the files, split into records(lines separated by '\n')
-	for (int i = 0; i < shard_size; i++) {
-		const File& file = request->shard(i);
+	for (const File file : request->shard()) {
 		const string& path = file.path();
 		streampos start_pos = file.start_pos();
 		streampos end_pos = file.end_pos();
@@ -97,9 +95,12 @@ grpc::Status Worker::AssignMap(grpc::ServerContext *context,
 		string record;
 
 		// passing to map 
-		while (getline(fin, record)) {
+		while (fin.tellg() < end_pos && getline(fin, record)) {
 			user_mapper->map(record);
 		}
+		
+		std::cout << "current pos: " << fin.tellg() <<std::endl;
+		std::cout << "end pos: " << end_pos <<std::endl;
 
 		fin.close();
 	}
@@ -121,7 +122,8 @@ grpc::Status Worker::AssignReduce(grpc::ServerContext* context, const ReduceRequ
 		 ReduceReply* reply){
 		std::string user_id = request->user_id();
 		std::shared_ptr<BaseReducer> user_reducer = get_reducer_from_task_factory(user_id);
-		//read all the inputFiles and arrange them into an unordered map;
+
+		//read all the inputFiles and arrange them into an ordered map;
 		std::string line;
 		std::map<std::string , std::vector<std::string>> resource;
 		for(const std::string& str : request->file_locs()){
@@ -135,7 +137,10 @@ grpc::Status Worker::AssignReduce(grpc::ServerContext* context, const ReduceRequ
 					linestream>>value;
 					resource[key].push_back(value);
 				}
+			} else {
+				std::cerr << "intermediate files not open" <<std::endl;
 			}
+
 			intermediate_file.close();			
 		}
 		
@@ -147,6 +152,7 @@ grpc::Status Worker::AssignReduce(grpc::ServerContext* context, const ReduceRequ
 		for(auto itr = resource.begin();itr != resource.end();itr++){
 			user_reducer->reduce(itr->first,itr->second);
 		}
+
 		//these should be dumped to the same file.
 		//and write-to-file should be done by emit function in baseReducerInternal.
 		reply->set_succeed(true);
