@@ -22,9 +22,15 @@ struct BaseMapperInternal {
 		/* NOW you can add below, data members and member functions as per the need of your implementation*/		
 		std::vector<std::string> output_files;
 		std::vector<std::ofstream> ofs;
-		void set_outputs(std::uint32_t n_outputs, std::uint32_t shard_id, std::string output_dir); 
+		void set_outputs(std::uint32_t n_outputs, std::uint32_t shard_id, std::string output_dir);
+		void close_output(); 
 };
 
+inline void BaseMapperInternal::close_output(){
+	for(auto it = ofs.begin();it!=ofs.end();it++){
+		it->close();
+	}
+}
 
 /* CS6210_TASK Implement this function */
 inline BaseMapperInternal::BaseMapperInternal() {

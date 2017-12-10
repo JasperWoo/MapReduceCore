@@ -104,6 +104,8 @@ grpc::Status Worker::AssignMap(grpc::ServerContext *context,
 		fin.close();
 	}
 
+	user_mapper->impl_->close_output();
+
 	// write response
 	response->set_succeed(true);
 	for (int i = 0; i < user_mapper->impl_->output_files.size(); i++) {
