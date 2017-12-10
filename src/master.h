@@ -29,6 +29,7 @@ class Master {
 
 	private:
 		/* NOW you can add below, data members and member functions as per the need of your implementation*/
+
 		enum WorkerType {
 	        	MAPPER = 1,
 	        	REDUCER = 2
@@ -73,13 +74,15 @@ class Master {
 				BUSY = 2
 			};
 			MRWorkerClient(Master * master, std::shared_ptr<grpc::Channel> channel, State state)
-			: master_(master), state_(state), stub_(MRWorker::NewStub(channel)) {}
+			: master_(master), state_(state), channel_(channel), stub_(MRWorker::NewStub(channel)) {}
 			
 			Master * const master_;
 
 			std::unique_ptr<MRWorker::Stub> stub_;
 
 			State state_;
+
+			std::shared_ptr<grpc::Channel>& channel_;
 			
 			// Assembles client payload and send to server.
 			void AssignMap (int worker_id, MapRequest map_task) {
@@ -107,6 +110,9 @@ class Master {
 			}
 
 		};
+		void checkState(grpc_connectivity_state expected_state, Master::MRWorkerClient::State expected_worker_state,
+			grpc_connectivity_state current_state, Master::MRWorkerClient* worker);
+
 
 		std::string worker_states[3] = {"DOWN", "AVAILABLE", "BUSY"};
 		std::vector<std::string> worker_addrs; // worker ip addresses and ports
@@ -128,6 +134,7 @@ bool allTrue(std::vector<bool> array) {
 	}
 	return true;
 }
+
 
 /* CS6210_TASK: This is all the information your master will get from the framework.
 	You can populate your other class data members here if you want */
@@ -168,44 +175,54 @@ Master::Master(const MapReduceSpec& mr_spec, const std::vector<FileShard>& file_
 	}
     
 }
+void Master::checkState(grpc_connectivity_state expected_state, MRWorkerClient::State expected_worker_state,
+	grpc_connectivity_state current_state, MRWorkerClient* worker) {
+	// Wait for 10ms to connect 
+	worker->channel_->WaitForStateChange(current_state, std::chrono::system_clock::now() + 
+		std::chrono::milliseconds(10));
+	grpc_connectivity_state state = worker->channel_->GetState(false);
+	if (state == expected_state) {
+		worker->state_ = expected_worker_state;
+	}	
+	std::cout << worker_states[worker->state_] << std::endl;
+	return;
+}
 
 /* CS6210_TASK: Here you go. once this function is called you will complete whole map reduce task and return true if succeeded */
 bool Master::run() {
 	// Initialize worker clients.
 	for (auto& worker_addr : worker_addrs) {
-		// TODO: deallocate
 		std::shared_ptr<grpc::Channel> channel = 
 			grpc::CreateChannel(worker_addr, grpc::InsecureChannelCredentials());
 		
 		// Initial channel is always IDLE
 		GPR_ASSERT(channel->GetState(true) == GRPC_CHANNEL_IDLE);
 		
-		// Wait for 10ms to connect 
-		auto channel_state = GRPC_CHANNEL_IDLE;
-		channel->WaitForStateChange(
-        channel_state, std::chrono::system_clock::now() + std::chrono::milliseconds(10));
-		channel_state = channel->GetState(false);
+		// TODO: deallocate
+		MRWorkerClient *worker = new MRWorkerClient(this, channel, MRWorkerClient::DOWN);
+		
+		std::cout << "Initial worker state is : ";
+		
+		checkState(GRPC_CHANNEL_READY, MRWorkerClient::AVAILABLE, GRPC_CHANNEL_IDLE, worker);
 
-		// For ready services, set worker status as available.
-		MRWorkerClient::State worker_state = MRWorkerClient::DOWN;
-		if(channel_state == GRPC_CHANNEL_CONNECTING || channel_state == GRPC_CHANNEL_READY) {
-			worker_state = MRWorkerClient::AVAILABLE;
-		}
-		std::cout << "Initial worker state is : " << worker_states[worker_state] << std::endl;
-		MRWorkerClient *worker = new MRWorkerClient(this, channel, worker_state);
 		mr_workers.push_back(worker);
 	}
 
-
-
-
 	// For every shard, send messages to workers async; Set deadline; 
 	while (!allTrue(map_complete)) {
-
 		for (int i = 0; i < mr_workers.size() && !map_tasks.empty(); i++) {
+
+			// TODO: recheck state to handle originally down workers to see if they
+			// have been rebooted.
+
+			// TODO: recheck state of busy workers to see if they are down, if down, 
+			// set as down
+			// originally available and busy workers are assumed to stay that way
+			// and their failure or straggling are handled via deadline mechanism.
 			if (!mr_workers[i]->state_ == MRWorkerClient::AVAILABLE) continue;
 			std::cout << "remaining tasks " << map_tasks.size() << std::endl;
 			std::cout << "worker " << i << " receiving map task" << std::endl;
+			// TODO: set deadline in context
 			mr_workers[i]->AssignMap(i, map_tasks.back());
 			mr_workers[i]->state_ == MRWorkerClient::BUSY;
 			map_tasks.pop_back();
@@ -213,7 +230,9 @@ bool Master::run() {
 		}
 		void *tag;
 		bool ok = false;
-		// cq.AsyncNext(&tag, &ok, std::chrono::seconds(1));
+		// if map_complete is not all true, that means we have pending results.
+		// stragglers or failed machines will also return back a deadline_exceeded
+		// msg back before deadline. So this should never block.
 		cq.Next(&tag, &ok);
 
 
@@ -222,7 +241,8 @@ bool Master::run() {
 			// TODO: need to handle worker straggling, worker fail and reboot
 			//  && call->error_code() == Status::DEADLINE_EXCEEDED
 			// 1. push_back the map_task
-			// 2. change worker state to DOWN
+			// TODO: ignore results that are duplicates, set the machine state 
+			// as available
 			if (!call->status_.ok()) {
 				std::cout << "[Map phase]: RPC failed" << std::endl;
 				std::cout << call->status_.error_code() << std::endl 
@@ -279,6 +299,9 @@ bool Master::run() {
 			}
 		}
 	}
+
+	// clean up
+
 	return true;
 }
 
