@@ -17,9 +17,11 @@
 
 using namespace masterworker;
 
-// Set timeout as global const here
-const unsigned int client_rpc_timeout_in_s = 2;
+// Set timeout as global configurable here
 const unsigned int client_connection_timeout_in_milli = 10;
+// set as variable because we tune to larger timeout everytime deadline is exceeded 
+unsigned int client_rpc_timeout_in_s = 2;
+
 /* CS6210_TASK: Handle all the bookkeeping that Master is supposed to do.
 	This is probably the biggest task for this project, will test your understanding of map reduce */
 class Master {
@@ -88,7 +90,7 @@ class Master {
 
 			State state_;
 
-			std::shared_ptr<grpc::Channel>& channel_;
+			std::shared_ptr<grpc::Channel> channel_;
 			
 
 			// Assembles client payload and send to server.
@@ -101,7 +103,6 @@ class Master {
 	    			std::chrono::system_clock::now() + std::chrono::seconds(client_rpc_timeout_in_s);
 
 	    		call->context_.set_deadline(deadline);
-				
 
 				call->rpc_reader_ = stub_->PrepareAsyncAssignMap(&call->context_, call->request_, &master_->cq);
 
@@ -130,10 +131,8 @@ class Master {
 		};
 		void connectWorker(grpc_connectivity_state expected_state, Master::MRWorkerClient::State expected_worker_state,
 			Master::MRWorkerClient* worker);
+		void blockAllDown(std::vector<MRWorkerClient*> mr_workers);
 
-
-		// std::string worker_states[3] = {"DOWN", "AVAILABLE", "BUSY"};
-   		// std::string channel_states[5] = {"IDLE", "CONNECTING", "READY", "TRANSIENT_FAILURE", "SHUTDOWN"};
 		std::vector<std::string> worker_addrs; // worker ip addresses and ports
 		std::vector<MapRequest> map_tasks;
 		std::vector<ReduceRequest> red_tasks;
@@ -193,16 +192,36 @@ Master::Master(const MapReduceSpec& mr_spec, const std::vector<FileShard>& file_
     
 }
 
+void Master::blockAllDown(std::vector<MRWorkerClient*> mr_workers) {
+	bool allDown = true;
+	for (MRWorkerClient* worker : mr_workers) {
+		if (worker->state_ != MRWorkerClient::DOWN) allDown = false;
+	}
+	if (allDown) {
+		std::cout << "All workers maybe down... Checking worker status before proceeding..." << std::endl;
+		while (true) {
+			bool up = false;
+			for (MRWorkerClient* worker : mr_workers) {
+				if (worker->state_ == MRWorkerClient::AVAILABLE) {
+					std::cout << "One worker is Up, entering map phase!" << std::endl;
+					up = true;
+					break;
+				}
+			}
+			if (up) {
+				break;
+			}
+		}
+	}
+}
+
 void Master::connectWorker(grpc_connectivity_state expected_state, 
 		MRWorkerClient::State expected_worker_state, MRWorkerClient* worker) {
-	std::cout << "here 111" <<std::endl;
-
 	while (!worker->channel_->WaitForConnected(std::chrono::system_clock::now() + std::chrono::seconds(client_connection_timeout_in_milli))) {}
 
 	worker->state_ = expected_worker_state;
 
 	std::cout << "Worker " << worker->worker_addr_ << " is up!" << std::endl;
-	
 	return;
 }
 
@@ -224,42 +243,12 @@ bool Master::run() {
 	
 	// For every shard, send messages to workers async; Set deadline; 
 	while (!allTrue(map_complete)) {
-		bool allDown = true;
-		for (MRWorkerClient* worker : mr_workers) {
-			if (worker->state_ != MRWorkerClient::DOWN) allDown = false;
-		}
-		if (allDown) {
-			std::cout << "All workers maybe down... Checking worker status before proceeding..." << std::endl;
-			while (true) {
-				bool up = false;
-				for (MRWorkerClient* worker : mr_workers) {
-					if (worker->state_ == MRWorkerClient::AVAILABLE) {
-						std::cout << "Up!" << std::endl;
-						up = true;
-						break;
-					}
-				}
-				if (up) {
-					break;
-				}
-			}
-		}
+	
+		blockAllDown(mr_workers);
+	
 		for (int i = 0; i < mr_workers.size() && !map_tasks.empty(); i++) {
-			// Recheck state to handle originally down workers to see if they
-			// have been rebooted.
-			// if (mr_workers[i]->state_ == MRWorkerClient::DOWN){
-			// 	checkState(GRPC_CHANNEL_READY, MRWorkerClient::AVAILABLE, GRPC_CHANNEL_IDLE, mr_workers[i]);
-
-			// }
-
-			// // Recheck state of busy workers to see if they are down, if down, 
-			// // set as down
-			// if (mr_workers[i]->state_ == MRWorkerClient::BUSY)
-			// 	checkState(GRPC_CHANNEL_IDLE, MRWorkerClient::DOWN, GRPC_CHANNEL_READY, mr_workers[i]);
-			
-
-			// originally available workers are assumed to stay that way
-			// and their failure or straggling are handled via deadline mechanism.
+			// originally available workers are assumed to stay that way.
+			// their failure or straggling are handled via deadline mechanism.
 			if (mr_workers[i]->state_ != MRWorkerClient::AVAILABLE) continue;
 			std::cout << "In map phase -- remaining tasks " << map_tasks.size() << std::endl;
 			
@@ -286,9 +275,14 @@ bool Master::run() {
 			// handle worker straggling, worker fail
 			// 1. push_back the map_task 2. set its state as down (but it may actually be busy, no difference.)
 			if (!call->status_.ok() && call->status_.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {
-				std::cout << "[Map phase]: Deadline exceeded" << std::endl;
+				std::cout << "[Map phase]: Deadline exceeded." << std::endl;
+				std::cout << "proactively setting " << mr_workers[call->worker_id_]->worker_addr_ << " as down." << std::endl;
+				std::cout << "smartly setting rpc_timeout(in s) from " << client_rpc_timeout_in_s 
+					<< " to " << client_rpc_timeout_in_s * 2 <<std::endl;
+				client_rpc_timeout_in_s = client_rpc_timeout_in_s * 2;
 				map_tasks.emplace_back(call->request_);
 				mr_workers[call->worker_id_]->state_ = MRWorkerClient::DOWN;
+				// spawn a new thread to make sure the straggler is connected before using it
 				new std::thread(&Master::connectWorker, this, GRPC_CHANNEL_READY, MRWorkerClient::AVAILABLE, mr_workers[call->worker_id_]);
 			} else if (!call->status_.ok()) {
 				std::cout << "[Map phase]: RPC failed!" << std::endl;
@@ -320,33 +314,10 @@ bool Master::run() {
 
 	// imd files have been set up, send reduce job 
 	while (!allTrue(red_complete)) {
-		bool allDown = true;
-		for (MRWorkerClient* worker : mr_workers) {
-			if (worker->state_ != MRWorkerClient::DOWN) allDown = false;
-		}
-		if (allDown) {
-			std::cout << "All workers maybe down... Checking worker status before proceeding..." << std::endl;
-			while (true) {
-				bool up = false;
-				for (MRWorkerClient* worker : mr_workers) {
-					if (worker->state_ == MRWorkerClient::AVAILABLE) {
-						std::cout << "Up!" << std::endl;
-						up = true;
-						break;
-					}
-				}
-				if (up) {
-					break;
-				}
-			}
-		}
-		for (int i = 0; i < mr_workers.size() && !red_tasks.empty(); i++) {
-			// if (mr_workers[i]->state_ == MRWorkerClient::DOWN)
-			// 	checkState(GRPC_CHANNEL_READY, MRWorkerClient::AVAILABLE, GRPC_CHANNEL_IDLE, mr_workers[i]);
-			
-			// if (mr_workers[i]->state_ == MRWorkerClient::BUSY)
-			// 	checkState(GRPC_CHANNEL_IDLE, MRWorkerClient::DOWN, GRPC_CHANNEL_READY, mr_workers[i]);
 
+		blockAllDown(mr_workers);
+
+		for (int i = 0; i < mr_workers.size() && !red_tasks.empty(); i++) {
 			if (!mr_workers[i]->state_ == MRWorkerClient::AVAILABLE) continue;
 
 			std::cout << "In reduce phase -- remaining tasks " << red_tasks.size() << std::endl;
@@ -367,7 +338,11 @@ bool Master::run() {
 		if (ok) {
 			MRReducerCallData* call = static_cast<MRReducerCallData*>(tag);
 			if (!call->status_.ok() && call->status_.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {
-				std::cout << "[Map phase]: Deadline exceeded" << std::endl;
+				std::cout << "[Reduce phase]: Deadline exceeded." << std::endl;
+				std::cout << "proactively setting " << mr_workers[call->worker_id_]->worker_addr_ << " as down." << std::endl;
+				std::cout << "smartly setting rpc_timeout(in s) from " << client_rpc_timeout_in_s 
+					<< " to " << client_rpc_timeout_in_s * 2 <<std::endl;
+				client_rpc_timeout_in_s = client_rpc_timeout_in_s * 2;
 				red_tasks.emplace_back(call->request_);
 				mr_workers[call->worker_id_]->state_ = MRWorkerClient::DOWN;
 				new std::thread(&Master::connectWorker, this, GRPC_CHANNEL_READY, MRWorkerClient::AVAILABLE, mr_workers[call->worker_id_]);
@@ -392,14 +367,12 @@ bool Master::run() {
 		}
 	}
 
-	// clean up
-	// for (auto worker : mr_workers) {
-	// 	delete worker;
-	// }
+	//clean up
+	for (auto worker : mr_workers) {
+		delete worker;
+	}
 
-
-
-		return true;
+	return true;
 }
 
 	
