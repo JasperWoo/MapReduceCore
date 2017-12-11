@@ -396,7 +396,10 @@ bool Master::run() {
 	// for (auto worker : mr_workers) {
 	// 	delete worker;
 	// }
-	return true;
+
+
+
+		return true;
 }
 
 	
