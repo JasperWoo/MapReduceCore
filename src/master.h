@@ -234,8 +234,6 @@ bool Master::run() {
 
 		MRWorkerClient *worker = new MRWorkerClient(worker_addr, this, channel, MRWorkerClient::DOWN);
 		
-		std::cout << "Initially -- Worker " << worker_addr << ":" << std::endl;
-
 		new std::thread(&Master::connectWorker, this, GRPC_CHANNEL_READY, MRWorkerClient::AVAILABLE, worker);
 
 		mr_workers.push_back(worker);
@@ -253,7 +251,7 @@ bool Master::run() {
 			std::cout << "In map phase -- remaining tasks " << map_tasks.size() << std::endl;
 			
 			std::cout << "Worker " << mr_workers[i]->worker_addr_ 
-				<< "receiving map task" << std::endl;
+				<< " receiving map task" << std::endl;
 
 			// Internally set deadline in context
 			mr_workers[i]->AssignMap(i, map_tasks.back());
@@ -295,6 +293,7 @@ bool Master::run() {
 				MapReply *mapReply = &call->reply_;
 				mr_workers[call->worker_id_]->state_ = MRWorkerClient::AVAILABLE;
 				if (mapReply->succeed() && !map_complete[call->request_.shard_id()]) {	
+					std::cout << "[Map phase]: map task " << call->request_.shard_id() << " finished!" << std::endl;
 					for (int i = 0; i < mapReply->file_locs_size(); i++) {
 						red_tasks[i].add_file_locs(mapReply->file_locs(i));
 					}
@@ -318,16 +317,15 @@ bool Master::run() {
 		blockAllDown(mr_workers);
 
 		for (int i = 0; i < mr_workers.size() && !red_tasks.empty(); i++) {
-			if (!mr_workers[i]->state_ == MRWorkerClient::AVAILABLE) continue;
+			if (mr_workers[i]->state_ != MRWorkerClient::AVAILABLE) continue;
 
 			std::cout << "In reduce phase -- remaining tasks " << red_tasks.size() << std::endl;
 			
 			std::cout << "Worker " << mr_workers[i]->worker_addr_ 
-				<< "receiving reduce task" << std::endl;
+				<< " receiving reduce task" << std::endl;
 
 
 			// Internally set deadline in context
-			if (!mr_workers[i]->state_ == MRWorkerClient::AVAILABLE) continue;
 			mr_workers[i]->AssignReduce(i, red_tasks.back());
 			mr_workers[i]->state_ == MRWorkerClient::BUSY;
 			red_tasks.pop_back();
@@ -351,13 +349,14 @@ bool Master::run() {
 				std::cout << call->status_.error_code() << std::endl 
 						  << call->status_.error_message() << std::endl
 						  << call->status_.error_details() << std::endl;
-				return false; 
 			} else if (call->reply_.succeed()) {
+				std::cout << "[Reduce phase]: reduce task " << call->request_.part_id() << " finished!" << std::endl;
 				// set the machine state as available
 				mr_workers[call->worker_id_]->state_ = MRWorkerClient::AVAILABLE;
 				// ignore results that are duplicates or are belong to a map task
 				if (call->type_ == REDUCER) 
 					red_complete[call->request_.part_id()] = true;
+
 			} else {
 				std::cout << "[Reduce phase]: unexpected case!" << std::endl;
 				return false;
@@ -368,27 +367,9 @@ bool Master::run() {
 	}
 
 	//clean up
-	for (auto worker : mr_workers) {
+	for (auto &worker : mr_workers) {
 		delete worker;
 	}
 
 	return true;
 }
-
-	
-	// 
-	// For every file location, send messages to worker async
-	// Wait for all responses to come back.
-
-	/*Example for setting up deadline
-	// Connection timeout in seconds
-	unsigned int client_connection_timeout = 5;
-
-	ClientContext context;
-
-	// Set timeout for API
-	std::chrono::system_clock::time_point deadline =
-	    std::chrono::system_clock::now() + std::chrono::seconds(client_connection_timeout);
-
-	context.set_deadline(deadline);
-	*/
