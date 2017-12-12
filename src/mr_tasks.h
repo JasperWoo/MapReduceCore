@@ -5,7 +5,7 @@
 #include <vector>
 #include <cstdint>
 #include <fstream>
-
+#include <cstdio>
 #include <unistd.h>
 #define PATH_MAX 200
 
@@ -49,7 +49,14 @@ inline void BaseMapperInternal::emit(const std::string& key, const std::string& 
 inline void BaseMapperInternal::set_outputs(std::uint32_t n_outputs, std::uint32_t shard_id, std::string output_dir) {
 	
 	for (int i = 0; i < n_outputs; i++) {
-		output_files.push_back(output_dir + "/med_part_" + std::to_string(i) + "_num_" + std::to_string(shard_id));
+		std::string output_path = output_dir + "/med_part_" + std::to_string(i) + "_num_" + std::to_string(shard_id);
+		output_files.push_back(output_path);
+		std::ifstream probe(output_path);
+		if(probe){
+			probe.close();
+			std::cout<<"duplicate file is removed"<<std::endl;
+			remove(output_path.c_str());
+		}
 		
 		ofs.emplace_back(std::ofstream(output_files[i], std::ios::binary | std::ios::app));
 	}
@@ -78,6 +85,15 @@ private:
 
 inline void BaseReducerInternal::set_output_folder(const std::string& path){
 	output_folder = path;
+	std::ifstream probe(path);
+		if(probe){
+			probe.close();
+			std::cout<<"duplicate file is removed"<<std::endl;
+			if(std::remove(path.c_str())!=0){
+				std::cout<<"error deleting"<<std::endl;
+			}
+		}
+
 }
 
 inline void BaseReducerInternal::set_n_output(const int i){

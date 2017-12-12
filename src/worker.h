@@ -120,6 +120,8 @@ grpc::Status Worker::AssignReduce(grpc::ServerContext* context, const ReduceRequ
 		std::string user_id = request->user_id();
 		std::shared_ptr<BaseReducer> user_reducer = get_reducer_from_task_factory(user_id);
 
+		user_reducer->impl_->set_n_output(request->n_outputs());
+		user_reducer->impl_->set_output_folder(request->output_dir());
 		//read all the inputFiles and arrange them into an ordered map;
 		std::string line;
 		std::map<std::string , std::vector<std::string>> resource;
@@ -143,8 +145,7 @@ grpc::Status Worker::AssignReduce(grpc::ServerContext* context, const ReduceRequ
 		
 		//once done, we can invoke reducer to do the work.
 		//but first, provide the config to imp_
-		user_reducer->impl_->set_n_output(request->n_outputs());
-		user_reducer->impl_->set_output_folder(request->output_dir());
+		
 
 		for(auto itr = resource.begin();itr != resource.end();itr++){
 			user_reducer->reduce(itr->first,itr->second);
